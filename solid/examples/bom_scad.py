@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Basic shape with several repeated parts, demonstrating the use of 
-# sp_utils.bill_of_materials() 
-# Writes a scad file to '$HOME/Desktop/BOM_example.scad'
+# solid.utils.bill_of_materials() 
 #
 # Basically:  
 #   -- Define every part you want in the Bill of Materials in a function
@@ -13,19 +12,16 @@
                 # def my_part():
                 #     pass
 #   -- Optionally, you can add a description and a per-unit cost to the 
-#       decorator invocations.  If cost is supplied, 
+#       decorator invocations.  
+#
 #   -- To generate the bill of materials, call bill_of_materials()
 #
 #       -ETJ 08 Mar 2011
 
 import os, sys
 
-# Make sure we have access to pyopenscad
-superdir = os.path.dirname( os.path.dirname(__file__))
-sys.path.append( superdir)
-
-from pyopenscad import *
-from sp_utils import *
+from solid import *
+from solid.utils import *
 
 head_rad = 2.65
 head_height = 2.8
@@ -104,11 +100,15 @@ def assemble():
                 translate( [10, 0, -nut_height-doohickey_h/2])(   m3_nut()),                
             )
 
-if __name__ == '__main__':
+if __name__ == '__main__':    
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else os.curdir
+    file_out = os.path.join( out_dir, 'BOM_example.scad')
+    
     a = assemble()
     
     bom = bill_of_materials()
+    
+    print "%(__file__)s: SCAD file written to: \n%(file_out)s \n"%vars()
     print bom
     
-    file_out = os.path.join( os.getenv('HOME'), 'Desktop', 'BOM_example.scad')
     scad_render_to_file( a, file_out)

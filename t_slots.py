@@ -3,8 +3,8 @@
 import os, sys, re
 
 # Assumes SolidPython is in site-packages or elsewhwere in sys.path
-from SolidPython.pyopenscad import *
-from SolidPython.sp_utils import *
+from solid import *
+from solid.utils import *
 
 
 tab_width = 5
@@ -47,7 +47,7 @@ def t_slot_holes( poly, point, normal,
     # move it back (down in Y) by material_thickness/2
     tab_holes = back( material_thickness/2)( tab_poly(material_thickness))
     
-    # Only valid for m3 screws now
+    # Only valid for m3-m5 screws now
     screw_dict = screw_dimensions.get( screw_type.lower())
     if screw_dict:
         screw_w = screw_dict['screw_outer_diam']
@@ -82,7 +82,7 @@ def t_slot( poly, point=None, normal=None,
     
     tab = tab_poly()
     slot = nut_trap_slot( screw_type, screw_length)
-
+    
     tab  = transform_to_point( tab,  point, normal, two_d=True)
     slot = transform_to_point( slot, point, normal, two_d=True)
             
@@ -99,7 +99,7 @@ def nut_trap_slot( screw_type='m3', screw_length=12, material_thickness=5):
     # tighten onto the shaft
     
     
-    # Only valid for m3 screws now
+    # Only valid for m3-m5 screws now
     screw_dict = screw_dimensions.get( screw_type.lower())
     if screw_dict:
         screw_w = screw_dict['screw_outer_diam']

@@ -28,16 +28,17 @@ openscad_builtins = [
     {'name': 'union',           'args': [],         'kwargs': []} ,
     {'name': 'intersection',    'args': [],         'kwargs': []} ,
     {'name': 'difference',      'args': [],         'kwargs': []} ,
+    {'name': 'hole',           'args': [],         'kwargs': []} ,
     
     # Transforms
     {'name': 'translate',       'args': [],         'kwargs': ['v']} ,
     {'name': 'scale',           'args': [],         'kwargs': ['v']} ,
     {'name': 'rotate',          'args': [],         'kwargs': ['a', 'v']} ,
     {'name': 'mirror',          'args': ['v'],      'kwargs': []},
-    {'name': 'multmatrix',      'args': ['n'],      'kwargs': []},
+    {'name': 'multmatrix',      'args': ['m'],      'kwargs': []},
     {'name': 'color',           'args': ['c'],      'kwargs': []},
-    {'name': 'hull',            'args': [],         'kwargs': []},
     {'name': 'minkowski',       'args': [],         'kwargs': []},
+    {'name': 'hull',            'args': [],         'kwargs': []},
     {'name': 'render',          'args': [],         'kwargs': ['convexity']}, 
         
     # 2D to 3D transitions
@@ -45,6 +46,7 @@ openscad_builtins = [
     {'name': 'rotate_extrude',  'args': [],         'kwargs': ['convexity']} ,
     {'name': 'dxf_linear_extrude', 'args': ['file'], 'kwargs': ['layer', 'height', 'center', 'convexity', 'twist', 'slices']} ,
     {'name': 'projection',      'args': [],         'kwargs': ['cut']} ,
+    {'name': 'surface',         'args': ['file'],   'kwargs': ['center','convexity']} ,
     
     # Import/export
     {'name': 'import_stl',      'args': ['filename'], 'kwargs': ['convexity']} ,
@@ -72,23 +74,32 @@ builtin_literals = {
                 paths = [ range( len( points))]
             openscad_object.__init__( self, 'polygon', {'points':points, 'paths': paths})
         
-'''
+''',
+    'hole':'''class hole( openscad_object):
+    def __init__( self):
+        openscad_object.__init__( self, 'union', {})
+        self.set_hole( True)
+    
+    '''
 
 }
 
 # ===============
 # = Including OpenSCAD code =
-# ===============
+# =============== 
+
+# use() & include() mimic OpenSCAD's use/include mechanics. 
+# -- use() makes methods in scad_file_path.scad available to 
+#   be called.
+# --include() makes those methods available AND executes all code in
+#   scad_file_path.scad, which may have side effects.  
+#   Unless you have a specific need, call use(). 
 def use( scad_file_path, use_not_include=True):
     '''
     TODO:  doctest needed
     '''
     # Opens scad_file_path, parses it for all usable calls, 
     # and adds them to caller's namespace
-    
-    # TODO: add something along the lines of PYTHONPATH for scad files?
-    # That way you could 'use( a_file.scad)' without using an absolute
-    # path or having the library in the same directory
     try:
         module = open( scad_file_path)
         contents = module.read()
@@ -135,7 +146,7 @@ def scad_render( scad_object, file_header=''):
     scad_body = root._render()
     return file_header + includes + scad_body
 
-def scad_render_to_file( scad_object, filepath=None, file_header='', include_orig_code=False):
+def scad_render_to_file( scad_object, filepath=None, file_header='', include_orig_code=True):
     rendered_string = scad_render( scad_object, file_header)
     
     calling_file = os.path.abspath( calling_module().__file__) 
@@ -149,7 +160,7 @@ def scad_render_to_file( scad_object, filepath=None, file_header='', include_ori
     
         pyopenscad_str = '''
 /***********************************************
-******      PyOpenSCAD code:       *************
+******      SolidPython code:      *************
 ************************************************
  
 %(pyopenscad_str)s 
@@ -181,6 +192,26 @@ class openscad_object( object):
         self.children = []
         self.modifier = ""
         self.parent= None
+        self.is_hole = False
+        self.has_hole_children = False
+    
+    def set_hole( self, is_hole=True):
+        self.is_hole = is_hole
+    
+    def find_hole_children( self):
+        hole_kids = []
+        for child in self.children:
+            if child.is_hole:
+                hole_kids.append( child)
+                # Mark that there are holes below all upper nodes,
+                # so the necessary transforms can be written later
+                p = child
+                while p.parent:
+                    p = p.parent
+                    p.has_hole_children = True
+            else:
+                hole_kids += child.find_hole_children()
+        return hole_kids
     
     def set_modifier(self, m):
         # Used to add one of the 4 single-character modifiers: #(debug)  !(root) %(background) or *(disable)
@@ -196,13 +227,9 @@ class openscad_object( object):
         self.modifier = string_vals.get(m.lower(), '')
         return self
     
-    def _render(self):
-        '''
-        NOTE: In general, you won't want to call this method. For most purposes,
-        you really want scad_render(), 
-        Calling obj._render won't include necessary 'use' or 'include' statements
-        '''        
-        s = "\n" + self.modifier + self.name + "("
+    def _render_str_no_children( self):
+        s = ""
+        s += "\n" + self.modifier + self.name + "("
         first = True
             
         # OpenSCAD doesn't have a 'segments' argument, but it does 
@@ -234,13 +261,71 @@ class openscad_object( object):
                 s += k + " = " + py2openscad(v)
                 
         s += ")"
+        return s
+        
+    def _render(self, render_holes=False):
+        '''
+        NOTE: In general, you won't want to call this method. For most purposes,
+        you really want scad_render(), 
+        Calling obj._render won't include necessary 'use' or 'include' statements
+        '''      
+        s = self._render_str_no_children()
+        
         if self.children != None and len(self.children) > 0:
             s += " {"
             for child in self.children:
-                s += indent(child._render())
+                # Don't immediately render hole children.
+                # Add them to the parent's hole list,
+                # And render after everything else
+                if not render_holes and child.is_hole:
+                    continue
+                s += indent(child._render( render_holes))
             s += "\n}"
         else:
             s += ";"
+            
+        # If this is the root object, find all holes
+        # and subtract them after all positive geometry is rendered
+        if not self.parent:
+            hole_children = self.find_hole_children()
+            
+            if len(hole_children) > 0:
+                s += "\n/* All Holes Below*/"
+                s += self._render_hole_children()
+                
+                # wrap everything in the difference
+                s = "difference() {" + indent(s) + "\n}"
+        return s
+    
+    def _render_hole_children( self):
+        # Run down the tree, rendering only those nodes
+        # that are holes or have holes beneath them
+        if not self.has_hole_children:
+            return ""
+        s = self._render_str_no_children() + "{"
+        for child in self.children:
+            if child.is_hole:
+                s += indent( child._render( render_holes=True)) 
+            elif child.has_hole_children:
+                # Holes exist in the compiled tree in two pieces:
+                # The shapes of the holes themselves, ( an object for which
+                # obj.is_hole is True, and all its children) and the 
+                # transforms necessary to put that hole in place, which
+                # are inherited from non-hole geometry.
+                
+                # Non-hole Intersections can change (shrink) the size of
+                # holes, and that shouldn't happen: an intersection with
+                # an empty space should be the entirety of the empty space.
+                #  In fact, the intersection of two empty spaces should be
+                # everything contained in both of them:  their union.
+                # So... replace all super-hole intersection transforms
+                # with union in the hole segment of the compiled tree.
+                # And if you figure out a better way to explain this, 
+                # please, please do... because I think this works, but I
+                # also think my rationale is shaky and imprecise. -ETJ 19 Feb 2013
+                s = s.replace( "intersection", "union")
+                s += indent( child._render_hole_children()) 
+        s += "\n}"
         return s
     
     def add(self, child):
@@ -251,11 +336,12 @@ class openscad_object( object):
         if child is a list, assume its members are all openscad_objects and
         add them all to self.children
         '''
-        if isinstance( child, list) or isinstance( child, tuple):
-            [self.add( c) for c in child]
+        if isinstance( child, (list, tuple)):
+            [self.add( c.copy() ) for c in child]
         else:
-            self.children.append(child)
-            child.set_parent( self)
+            c = child.copy()
+            self.children.append( c)
+            c.set_parent( self)
         return self
     
     def set_parent( self, parent):
@@ -269,7 +355,14 @@ class openscad_object( object):
         # Provides a copy of this object and all children, 
         # but doesn't copy self.parent, meaning the new object belongs
         # to a different tree
-        other = openscad_object( self.name, self.params)
+        # If we're copying a scad object, we know it is an instance of 
+        # a dynamically created class called self.name.  
+        # Initialize an instance of that class with the same params
+        # that created self, the object being copied.
+        other = globals()[ self.name]( **self.params)
+        other.set_modifier( self.modifier)
+        other.set_hole( self.is_hole)
+        other.has_hole_children = self.has_hole_children
         for c in self.children:
             other.add( c.copy())
         return other
@@ -314,7 +407,8 @@ class included_openscad_object( openscad_object):
     to the scad file it's included from.
     '''
     def __init__( self, name, params, include_file_path, use_not_include=False):
-        self.include_file_path = include_file_path
+        self.include_file_path = self._get_include_path( include_file_path)
+        
         if use_not_include:
             self.include_string = 'use <%s>\n'%self.include_file_path
         else:
@@ -322,7 +416,21 @@ class included_openscad_object( openscad_object):
         
         openscad_object.__init__( self, name, params)
     
-
+    def _get_include_path( self, include_file_path):
+        # Look through sys.path for anyplace we can find a valid file ending
+        # in include_file_path.  Return that absolute path
+        if os.path.isabs( include_file_path): 
+            return include_file_path
+        else:
+            for p in sys.path:       
+                whole_path = os.path.join( p, include_file_path)
+                if os.path.isfile( whole_path):
+                    return os.path.abspath(whole_path)
+            
+        # No loadable SCAD file was found in sys.path.  Raise an error
+        raise( ValueError, "Unable to find included SCAD file: "
+                            "%(include_file_path)s in sys.path"%vars())
+    
 
 def calling_module():
     '''
@@ -363,6 +471,7 @@ def new_openscad_class_str( class_name, args=[], kwargs=[], include_file_path=No
             openscad_object.__init__(self, '%(class_name)s', {%(args_pairs)s })
         
 '''%vars()
+    
     return result
 
 def py2openscad(o):

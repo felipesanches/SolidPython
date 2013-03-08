@@ -2,15 +2,27 @@
 # -*- coding: utf-8 -*-
 import os, sys, re
 
-sys.path.append(os.path.join( os.getenv('HOME'), 'Desktop', 'SolidPython'))
+from solid import *
+from solid.utils import *
 
-from pyopenscad import *
-from sp_utils import *
-
-sys.path.append( os.path.join( os.getenv('HOME'), 'Desktop','pyeuclid'))
 from euclid import *
 
 ONE_THIRD = 1/3.0
+
+def affine_combination( a, b, weight=0.5):
+    '''
+    Note that weight is a fraction of the distance between self and other.
+    So... 0.33 is a point .33 of the way between self and other.  
+    '''
+    if hasattr( a, 'z'):
+        return Point3(  (1-weight)*a.x + weight*b.x,  
+                        (1-weight)*a.y + weight*b.y,
+                        (1-weight)*a.z + weight*b.z,
+                    )
+    else:
+        return Point2(  (1-weight)*a.x + weight*b.x,  
+                        (1-weight)*a.y + weight*b.y,
+                    )        
 
 def kochify_3d( a, b, c, 
             ab_weight=0.5, bc_weight=0.5, ca_weight=0.5, 
@@ -24,9 +36,9 @@ def kochify_3d( a, b, c,
     pyr_height determines how far from the face the new pyramid's point will be
     '''
     triangles = []
-    new_a = a.affine_combination( b, ab_weight)
-    new_b = b.affine_combination( c, bc_weight)
-    new_c = c.affine_combination( a, ca_weight)
+    new_a = affine_combination( a, b, ab_weight)
+    new_b = affine_combination( b, c, bc_weight)
+    new_c = affine_combination( c, a, ca_weight)
     
     triangles.extend( [[a, new_a, new_c], [b, new_b, new_a], [c, new_c, new_b]])
     
@@ -53,9 +65,9 @@ def kochify_3d( a, b, c,
 
 def kochify( seg, height_ratio=0.33, left_loc= 0.33, midpoint_loc=0.5, right_loc= 0.66): 
     a, b = seg.p1, seg.p2
-    l = a.affine_combination( b, left_loc)
-    c = a.affine_combination( b, midpoint_loc)
-    r = a.affine_combination( b, right_loc)
+    l = affine_combination( a, b, left_loc)
+    c = affine_combination( a, b, midpoint_loc)
+    r = affine_combination( a, b, right_loc)
     # The point of the new triangle will be  height_ratio * abs(seg) long, 
     # and run perpendicular to seg, through c.
     perp = seg.v.cross().normalized()
@@ -70,7 +82,7 @@ def kochify( seg, height_ratio=0.33, left_loc= 0.33, midpoint_loc=0.5, right_loc
              LineSegment2( perp_pt, r),
              LineSegment2( r, b)]
 
-def main_3d():
+def main_3d( out_dir):
     gens = 4
     
     # Parameters
@@ -130,9 +142,12 @@ def main_3d():
             )
         )
     
-    scad_render_to_file( all_polys, os.path.join( os.getenv('HOME'), 'Desktop', 'koch_3d.scad'))    
+    file_out = os.path.join( out_dir, 'koch_3d.scad')
+    cur_file = __file__
+    print "%(cur_file)s: SCAD file written to: %(file_out)s"%vars()
+    scad_render_to_file( all_polys, file_out, include_orig_code=True)    
 
-def main():
+def main( out_dir):
     # Parameters
     midpoint_weight = 0.5
     height_ratio = 0.25
@@ -178,9 +193,14 @@ def main():
         # Do the SCAD
         edges = [range(len(points))]
         all_polys.add( forward( h)( polygon(points=points, paths=edges )))
-    
-    scad_render_to_file( all_polys, os.path.join( os.getenv('HOME'), 'Desktop', 'koch.scad'))
+                   
+    file_out = os.path.join( out_dir,'koch.scad') 
+    cur_file = __file__  
+    print "%(cur_file)s: SCAD file written to: %(file_out)s "%vars()
+    scad_render_to_file( all_polys, file_out, include_orig_code=True )
 
 if __name__ == '__main__':
-    main_3d()
-    main()
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else os.curdir
+    main_3d( out_dir)
+    main( out_dir)
+    
